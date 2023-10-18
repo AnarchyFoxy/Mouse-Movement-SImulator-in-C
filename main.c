@@ -1,107 +1,91 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <time.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <winuser.h>
+#define SLEEP(milliseconds) Sleep(milliseconds)
+#define MOUSE_MOVE(x, y) SetCursorPos(x, y)
+#elif __APPLE__
+#include <ApplicationServices/ApplicationServices.h>
+#include <unistd.h>
+#define SLEEP(milliseconds) usleep(milliseconds * 1000)
+#define MOUSE_MOVE(x, y) moveMouse(x, y)
+void moveMouse(int x, int y) {
+    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, kCGHIDEventTap, kCGEventTimestampHost, kCGEventMouseAbsolute, x, y, kCGEventFlagMaskNone);
+    CGEventPost(kCGHIDEventTap, move);
+    CFRelease(move);
+}
 #else
 #include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#endif
-
-void runSimulation() {
-#ifdef _WIN32
-    INPUT input = {0};
-    input.type = INPUT_MOUSE;
-
-    int distance = 200; // Przesunięcie w pikselach
-    int duration = 1000; // Czas trwania ruchu w milisekundach
-
-    POINT startPoint;
-    GetCursorPos(&startPoint);
-
-    int simulationDuration = 3600000;
-
-    long startTime = GetTickCount();
-    while (GetTickCount() - startTime < simulationDuration) {
-        for (int i = 0; i < distance; i++) {
-            startPoint.y -= 1;
-            input.mi.dx = startPoint.x - startPoint.x;
-            input.mi.dy = startPoint.y - startPoint.y;
-            input.mi.dwFlags = MOUSEEVENTF_MOVE;
-            SendInput(1, &input, sizeof(INPUT));
-            Sleep(duration / distance);
-        }
-
-        for (int i = 0; i < distance; i++) {
-            startPoint.y += 1;
-            input.mi.dx = startPoint.x - startPoint.x;
-            input.mi.dy = startPoint.y - startPoint.y;
-            input.mi.dwFlags = MOUSEEVENTF_MOVE;
-            SendInput(1, &input, sizeof(INPUT));
-            Sleep(duration / distance);
-        }
-    }
-#else
-    // X Window System (Linux, macOS)
-    Display* display = XOpenDisplay(NULL);
-    if (display == NULL) {
-        fprintf(stderr, "Nie można otworzyć ekranu X11\n");
-        exit(1);
-    }
-
-    int screen = DefaultScreen(display);
-    int rootWindow = RootWindow(display, screen);
-
-    int distance = 200; // Przesunięcie w pikselach
-    int duration = 1000; // Czas trwania ruchu w milisekundach
-
-    XEvent event;
-    XQueryPointer(display, rootWindow, &event.xbutton.root, &event.xbutton.window, &event.xbutton.x_root, &event.xbutton.y_root, &event.xbutton.x, &event.xbutton.y, &event.xbutton.state);
-
-    int simulationDuration = 3600000;
-
-    long startTime = getTimestamp();
-    while (getTimestamp() - startTime < simulationDuration) {
-        for (int i = 0; i < distance; i++) {
-            event.xbutton.y_root--;
-            XWarpPointer(display, None, rootWindow, 0, 0, 0, 0, event.xbutton.x_root, event.xbutton.y_root);
-            XFlush(display);
-            usleep(duration * 1000 / distance);
-        }
-
-        for (int i = 0; i < distance; i++) {
-            event.xbutton.y_root++;
-            XWarpPointer(display, None, rootWindow, 0, 0, 0, 0, event.xbutton.x_root, event.xbutton.y_root);
-            XFlush(display);
-            usleep(duration * 1000 / distance);
-        }
-    }
-
+#include <X11/extensions/XTest.h>
+#include <unistd.h>
+#define SLEEP(milliseconds) usleep(milliseconds * 1000)
+#define MOUSE_MOVE(x, y) moveMouse(x, y)
+void moveMouse(int x, int y) {
+    Display *display = XOpenDisplay(NULL);
+    XWarpPointer(display, None, DefaultRootWindow(display), 0, 0, 0, 0, x, y);
+    XFlush(display);
     XCloseDisplay(display);
-#endif
 }
-
-long getTimestamp() {
-#ifdef _WIN32
-    return GetTickCount();
-#else
-    struct timeval currentTime;
-    gettimeofday(&currentTime, NULL);
-    return currentTime.tv_sec * 1000 + currentTime.tv_usec / 1000;
 #endif
+
+void simulateMouseMovement(int distance, int duration) {
+    int startX, startY;
+    int simulationDuration = 3600000; // 1 godzina
+    clock_t startTime = clock();
+
+    #ifdef _WIN32
+    POINT cursorPos;
+    GetCursorPos(&cursorPos);
+    startX = cursorPos.x;
+    startY = cursorPos.y;
+    #elif __APPLE__
+    CGEventRef event = CGEventCreate(NULL);
+    CGPoint currentPos = CGEventGetLocation(event);
+    startX = (int)currentPos.x;
+    startY = (int)currentPos.y;
+    CFRelease(event);
+    #else
+    Display *display = XOpenDisplay(NULL);
+    Window root = DefaultRootWindow(display);
+    XWindowAttributes attrs;
+    XGetWindowAttributes(display, root, &attrs);
+    startX = attrs.width / 2;
+    startY = attrs.height / 2;
+    XCloseDisplay(display);
+    #endif
+
+    while ((clock() - startTime) * 1000 / CLOCKS_PER_SEC < simulationDuration) {
+        for (int i = 0; i < distance; i++) {
+            MOUSE_MOVE(startX, startY - i);
+            SLEEP(duration / distance);
+        }
+
+        for (int i = 0; i < distance; i++) {
+            MOUSE_MOVE(startX, startY - distance + i);
+            SLEEP(duration / distance);
+        }
+    }
 }
 
 int main() {
     char response;
+    int distance = 200;
+    int duration = 1000;
+
     do {
-        runSimulation();
+        simulateMouseMovement(distance, duration);
+
+        printf("Symulacja zakończona.\n");
         printf("Czy chcesz uruchomić symulację ponownie? (T/N): ");
         scanf(" %c", &response);
-    } while (response == 'T' || response == 't);
+        response = tolower(response);
+    } while (response == 't');
 
-    printf("Mam nadzieję, że symulator był przydatny.\n");
-    printf("\nTo rzekła Anarchy Foxy\n");
+    printf("Koniec programu.\n");
 
     return 0;
 }
